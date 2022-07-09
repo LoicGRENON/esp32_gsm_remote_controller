@@ -35,6 +35,7 @@ void IRAM_ATTR ISR_GSM_RI(){
 }
 
 void read_sms_message(int sms_index) {
+    // TODO: Check if sender is allowed
     String message = "";
     String sender = "";
     modem.readSMS(sms_index, sender, message);
@@ -54,6 +55,7 @@ void parse_gsm_event_message() {
         Serial.print("New SMS arrived at index: ");
         Serial.println(sms_index);
         read_sms_message(sms_index);
+        modem.deleteSMS(sms_index);
     } else {
         Serial.println("Unkown GSM event: ");
         Serial.println(sGsmEventData);
