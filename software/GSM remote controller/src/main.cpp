@@ -36,15 +36,13 @@ void IRAM_ATTR ISR_GSM_RI(){
 }
 
 void read_sms_message(int sms_index) {
-    // TODO: add a readSMS() declaration to get the senderID at once (one AT+CMGR command)
-    // Currently both readSMS and getSenderID send AT+CMGR commands which is slow
-    // => pass these variables as reference of the function
-    String SMS = modem.readSMS(sms_index);
-    String ID = modem.getSenderID(sms_index);
+    String message = "";
+    String sender = "";
+    modem.readSMS(sms_index, sender, message);
     Serial.print("Message From : ");
-    Serial.println(ID);
+    Serial.println(sender);
     Serial.println(" and the message is ");
-    Serial.println(SMS);
+    Serial.println(message);
 }
 
 void parse_gsm_event_message() {
@@ -53,10 +51,8 @@ void parse_gsm_event_message() {
     String sGsmEventData = *pGsmEventData;
 
     if(sGsmEventData.indexOf("CMTI:") > 0) {  // New message has been received
-        Serial.print("New SMS arrived at index :- ");
-        //Serial.println(sGsmEventData);
-        // TODO: remove the need to use newMessageInterrupt()
         int sms_index = modem.newMessageInterrupt(sGsmEventData);
+        Serial.print("New SMS arrived at index :- ");
         Serial.println(sms_index);
         read_sms_message(sms_index);
     } else {
@@ -66,26 +62,31 @@ void parse_gsm_event_message() {
     }
 }
 
-void setup() {
-    Serial.begin(115200);
-    Serial.println("Initializing Serial...");
-
+void setup_gsm_modem() {
+    Serial.println("Initializing GSM module...");
     // TODO: Try using higher baudrate
     // Maybe check using TinyGsmAutoBaud() - But not in production code !
     GsmSerial.begin(9600, SWSERIAL_8N1, GSM_RX_PIN, GSM_TX_PIN);
-    Serial.println("Initializing GSM module...");
     delay(100);
 
-    // Autobaud communication with modem
-    // TODO: wait for OK ?
-    GsmSerial.write("AT\r");
-    delay(1000);
+    // Autobaud communication with modem 
+    if (!modem.testAT(5000L)) // Timeout 5s to respond to AT
+        Serial.println("Modem not responding to AT command. Autobauding failed.");
     
     // Queue of string pointers to get the data sent by the modem on RI events
     qGsmEventData = xQueueCreate(10, sizeof(String *));
     // Enable interrupt from SIM808 GSM module
     pinMode(GSM_INT_PIN, INPUT);
     attachInterrupt(digitalPinToInterrupt(GSM_INT_PIN), ISR_GSM_RI, RISING);
+
+    Serial.println("Initializing GSM module done");
+}
+
+void setup() {
+    Serial.begin(115200);
+    Serial.println("Initializing ...");
+
+    setup_gsm_modem();
 
     Serial.println("Initializing done");
 }
