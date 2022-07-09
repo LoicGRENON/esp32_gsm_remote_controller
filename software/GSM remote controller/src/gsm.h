@@ -1,3 +1,4 @@
+#include <regex.h>
 
 // Define modem type
 #define TINY_GSM_MODEM_SIM808
@@ -34,8 +35,14 @@ void IRAM_ATTR ISR_GSM_RI(){
     xQueueSendToBackFromISR(qGsmEventData, &pGsmEventData, &xHigherPriorityTaskWoken);
 }
 
+void parse_command(String command, String value, bool reply_required) {
+    // TODO: To be continued
+    Serial.println(command);
+    Serial.println(value);
+    Serial.println(reply_required);
+}
+
 void read_sms_message(int sms_index) {
-    // TODO: Check if sender is allowed
     String message = "";
     String sender = "";
     modem.readSMS(sms_index, sender, message);
@@ -43,6 +50,29 @@ void read_sms_message(int sms_index) {
     Serial.print(sender);
     Serial.println(" and the message is: ");
     Serial.println(message);
+
+    // TODO: Check if sender is allowed before going further
+
+    regex_t preg;
+    const char *pattern = ";\\(+*\\)\\([[:alnum:]]*\\)=\\([[:alnum:]]*\\)";
+    int rc;
+    size_t nmatch = 4;
+    regmatch_t pmatch[4];
+    if(0 != (rc = regcomp(&preg, pattern, 0))) {
+        Serial.println("Unable to compile regexp");
+        regfree(&preg);
+        return;
+    }
+    if (0 == (rc = regexec(&preg, message.c_str(), nmatch, pmatch, 0))) { // Regex match
+        // if the message contains a "+", it means a reply is required
+        bool bReplyRqst = (message.substring(pmatch[1].rm_eo, pmatch[1].rm_so)).length() == 1;
+        String sCommand = message.substring(pmatch[2].rm_eo, pmatch[2].rm_so);
+        String sValue = message.substring(pmatch[3].rm_eo, pmatch[3].rm_so);
+        parse_command(sCommand, sValue, bReplyRqst);
+    } else {  // Regex doesn't match
+        Serial.println("Invalid command. Ignoring.");
+    }
+    regfree(&preg);
 }
 
 void parse_gsm_event_message() {
@@ -65,9 +95,7 @@ void parse_gsm_event_message() {
 
 void setup_gsm_modem() {
     Serial.println("Initializing GSM module...");
-    // TODO: Try using higher baudrate
-    // Maybe check using TinyGsmAutoBaud() - But not in production code !
-    GsmSerial.begin(9600, SWSERIAL_8N1, GSM_RX_PIN, GSM_TX_PIN);
+    GsmSerial.begin(57600, SWSERIAL_8N1, GSM_RX_PIN, GSM_TX_PIN);
     delay(100);
 
     // Autobaud communication with modem 
