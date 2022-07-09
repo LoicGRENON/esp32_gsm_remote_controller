@@ -19,28 +19,20 @@
 SoftwareSerial GsmSerial;
 TinyGsm modem(GsmSerial);
 
-volatile int sms_index = 0;
+QueueHandle_t qGsmEventData;
+String sGsmEventDataISR;
 
 void IRAM_ATTR ISR_GSM_RI(){
-  String msg = "";
-
+  sGsmEventDataISR = "";
   while(GsmSerial.available()) {
     char c = GsmSerial.read();
-    msg += c;   
+    sGsmEventDataISR += c;
   }
 
-  // TODO: Move the code below outside ISR ?
-  // Or use ets_printf instead of Serial.println as least
-  if(msg.indexOf("CMTI:") > 0) {  // New message has been received
-    Serial.print("New SMS arrived at index :- ");
-    sms_index = modem.newMessageInterrupt(msg);
-    Serial.println(sms_index);
-    msg = "";
-  } else {
-    Serial.println("false alarm");
-    Serial.println(msg);
-    return;
-  }
+  // Send the string pointer to queue for further use
+  String * pGsmEventData = &sGsmEventDataISR;
+  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+  xQueueSendToBackFromISR(qGsmEventData, &pGsmEventData, &xHigherPriorityTaskWoken);
 }
 
 void read_sms_message(int sms_index) {
@@ -53,6 +45,25 @@ void read_sms_message(int sms_index) {
   Serial.println(ID);
   Serial.println(" and the message is ");
   Serial.println(SMS);
+}
+
+void parse_gsm_event_message() {
+  String *pGsmEventData;
+  xQueueReceive(qGsmEventData, &pGsmEventData, portMAX_DELAY);
+  String sGsmEventData = *pGsmEventData;
+
+  if(sGsmEventData.indexOf("CMTI:") > 0) {  // New message has been received
+    Serial.print("New SMS arrived at index :- ");
+    //Serial.println(sGsmEventData);
+    // TODO: remove the need to use newMessageInterrupt()
+    int sms_index = modem.newMessageInterrupt(sGsmEventData);
+    Serial.println(sms_index);
+    read_sms_message(sms_index);
+  } else {
+    Serial.println("false alarm");
+    Serial.println(sGsmEventData);
+    return;
+  }
 }
 
 void setup() {
@@ -70,27 +81,17 @@ void setup() {
   GsmSerial.write("AT\r");
   delay(1000);
   
+  // Queue of string pointers to get the data sent by the modem on RI events
+  qGsmEventData = xQueueCreate(10, sizeof(String *));
   // Enable interrupt from SIM808 GSM module
   pinMode(GSM_INT_PIN, INPUT);
-  attachInterrupt(digitalPinToInterrupt(GSM_INT_PIN), ISR_GSM_RI, HIGH);  // TODO: use RISING instead of HIGH ? Check SIM808 datasheet how long RI stays high
+  attachInterrupt(digitalPinToInterrupt(GSM_INT_PIN), ISR_GSM_RI, RISING);
 
   Serial.println("Initializing done");
 }
 
 // TODO: TinyGSM is a blocking library so use FreeRTOS and tasks to use the second core of ESP32
 void loop() {
-  Serial.println("Enter the SMS index to Read ");
-  while(Serial.available() == 0){
-
-  }
-  int i = Serial.parseInt();
-  Serial.print("Reading message at :- ");
-  Serial.println(i);
-  read_sms_message(i);
-
-  // if interrupt occurs, Fetch the SMS from indexed MSSG number.   
-  if(sms_index > 0){
-    read_sms_message(sms_index);
-    sms_index=0;
-  }
+  parse_gsm_event_message();
+  delay(500);
 }
