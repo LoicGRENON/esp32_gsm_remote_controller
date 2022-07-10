@@ -15,24 +15,27 @@
 #define GSM_TX_PIN 17
 // Define interrupt pin to use for modem RI pin
 #define GSM_INT_PIN 18
+// Define the max size of the AT response message
+// a SMS can be 152 characters long 
+// + we add some room for the "AT+CMGR:" stuff (date, sender id, etc...)
+#define GSM_AT_RESPONSE_MAX 255
 
 SoftwareSerial GsmSerial;
 TinyGsm modem(GsmSerial);
 
 QueueHandle_t qGsmEventData;
-String sGsmEventDataISR;
 
 void IRAM_ATTR ISR_GSM_RI(){
-    sGsmEventDataISR = "";
+    char cGsmEventDataISR[GSM_AT_RESPONSE_MAX] = "";
+    int i = 0;
     while(GsmSerial.available()) {
         char c = GsmSerial.read();
-        sGsmEventDataISR += c;
+        cGsmEventDataISR[i++] += c;
     }
 
-    // Send the string pointer to queue for further use
-    String * pGsmEventData = &sGsmEventDataISR;
+    // Send the string to queue for further use
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    xQueueSendToBackFromISR(qGsmEventData, &pGsmEventData, &xHigherPriorityTaskWoken);
+    xQueueSendToBackFromISR(qGsmEventData, &cGsmEventDataISR, &xHigherPriorityTaskWoken);
 }
 
 void parse_command(String command, String value, bool reply_required) {
@@ -76,9 +79,9 @@ void read_sms_message(int sms_index) {
 }
 
 void parse_gsm_event_message() {
-    String *pGsmEventData;
-    xQueueReceive(qGsmEventData, &pGsmEventData, portMAX_DELAY);
-    String sGsmEventData = *pGsmEventData;
+    char cGsmEventData[GSM_AT_RESPONSE_MAX] = "";
+    xQueueReceive(qGsmEventData, &cGsmEventData, portMAX_DELAY);
+    String sGsmEventData = String(cGsmEventData);
 
     if(sGsmEventData.indexOf("CMTI:") > 0) {  // New message has been received
         int sms_index = modem.newMessageInterrupt(sGsmEventData);
@@ -87,7 +90,7 @@ void parse_gsm_event_message() {
         read_sms_message(sms_index);
         modem.deleteSMS(sms_index);
     } else {
-        Serial.println("Unkown GSM event: ");
+        Serial.println("Unknown AT response:");
         Serial.println(sGsmEventData);
         return;
     }
@@ -103,7 +106,7 @@ void setup_gsm_modem() {
         Serial.println("Modem not responding to AT command. Autobauding failed.");
     
     // Queue of string pointers to get the data sent by the modem on RI events
-    qGsmEventData = xQueueCreate(10, sizeof(String *));
+    qGsmEventData = xQueueCreate(5, sizeof(char[GSM_AT_RESPONSE_MAX]));
     // Enable interrupt from SIM808 GSM module
     pinMode(GSM_INT_PIN, INPUT);
     attachInterrupt(digitalPinToInterrupt(GSM_INT_PIN), ISR_GSM_RI, RISING);
